@@ -7,11 +7,13 @@
 #include "panel-info.h"
 
 
-#define WIDTH     (200)
+#define PADDING                       (15)
 
-#define  TAG_BASE       (10)
+#define WIDTH                        (200)
 
-#define DURATION_HIGHLIGHT    (300)
+#define  TAG_BASE                     (10)
+
+#define DURATION_HIGHLIGHT           (300)
 
 #define COLOR_ENTRY           (0x00444488)
 
@@ -31,18 +33,17 @@ typedef struct State {
     FfxNode active;
     int index;
 
-    InfoSelectFunc selectFunc;
-
     // Child state goes here
 } State;
 
 
 typedef struct Button {
-    int16_t userData;
+    InfoClickFunc clickFunc;
+    InfoClickArg clickArg;
 } Button;
 
 static FfxNode appendHighlight(State *state, color_ffxt color,
-  int16_t userData) {
+  InfoClickFunc clickFunc, InfoClickArg clickArg) {
 
     int index = state->nextIndex++;
 
@@ -53,10 +54,11 @@ static FfxNode appendHighlight(State *state, color_ffxt color,
       sizeof(Button), glow);
     ffx_sceneNode_setPosition(anchor, ffx_point(10, state->offset));
     Button *button = ffx_sceneAnchor_getData(anchor);
-    button->userData = userData;
+    button->clickFunc = clickFunc;
+    button->clickArg = clickArg;
     ffx_sceneGroup_appendChild(state->info, anchor);
 
-    if (state->active == NULL && userData) {
+    if (state->active == NULL) {
         ffx_sceneBox_setColor(glow, ffx_color_setOpacity(color, OPACITY_80));
         state->active = anchor;
         state->index = index;
@@ -90,10 +92,8 @@ static bool highlight(State *state, uint32_t index) {
     color_ffxt color = ffx_sceneBox_getColor(glow);
     ffx_sceneNode_stopAnimations(glow, false);
 
-    if (button->userData) {
-        ffx_sceneBox_animateColor(glow, ffx_color_setOpacity(color, OPACITY_80),
-          0, 300, FfxCurveLinear, NULL, NULL);
-    }
+    ffx_sceneBox_animateColor(glow, ffx_color_setOpacity(color, OPACITY_80),
+      0, 300, FfxCurveLinear, NULL, NULL);
 
     // Scroll highlight onto screen
 
@@ -143,40 +143,79 @@ static bool selectHighlight(State *state) {
     if (node == NULL) { return false; }
 
     Button *button = ffx_sceneAnchor_getData(node);
-    state->selectFunc(&state[1], button->userData);
+    button->clickFunc(&state[1], button->clickArg);
 
     return true;
 }
 
 
-void appendPadding(void *infoState, size_t size) {
-    State *state = infoState;
+static void appendPadding(void *info, size_t size) {
+    State *state = info;
     state->offset += size;
 }
 
 #define FONT_TITLE         (FfxFontSmallBold)
-#define COLOR_TITLE        (ffx_color_rgb(120, 120, 120))
+#define COLOR_TITLE        (ffx_color_rgb(200, 200, 220))
 
 #define FONT_HEADING       (FfxFontSmall)
-#define COLOR_HEADING      (ffx_color_rgb(200, 200, 200))
+#define COLOR_HEADING      (ffx_color_rgb(200, 200, 220))
 
-#define FONT_VALUE         (FfxFontMediumBold)
+#define FONT_VALUE         (FfxFontMedium)
 #define COLOR_VALUE        (COLOR_WHITE)
 
-void appendText(void *infoState, const char* text, FfxFont font,
+static int indexOf(const char* text, char search) {
+    int index = 0;
+    while (true) {
+        char c = text[index];
+        if (c == 0) { break; }
+        if (c == search) { return index; }
+        index++;
+    }
+    return -1;
+}
+
+static void _appendText(void *info, const char* text, FfxFont font,
   color_ffxt color) {
 
-    State *state = infoState;
+    State *state = info;
 
     FfxFontMetrics metrics = ffx_scene_getFontMetrics(font);
 
-    FfxNode label = ffx_scene_createLabel(state->scene, font, text);
-    ffx_sceneGroup_appendChild(state->info, label);
-    ffx_sceneLabel_setAlign(label, FfxTextAlignTop | FfxTextAlignCenter);
-    ffx_sceneLabel_setTextColor(label, color);
-    ffx_sceneNode_setPosition(label, ffx_point(WIDTH / 2, state->offset));
+    int marginTop = 0;
 
-    state->offset += metrics.size.height -  metrics.descent;
+    int index = 0;
+    bool done = false;
+    while(!done) {
+        state->offset += marginTop;
+
+        FfxNode label = ffx_scene_createLabel(state->scene, font, NULL);
+
+        const char* line = &text[index];
+        int length = indexOf(line, '\n');
+        if (length == -1) {
+            ffx_sceneLabel_setText(label, line);
+            done = true;
+        } else if (length == 0) {
+            state->offset += metrics.size.height -  metrics.descent;
+            index++;
+            continue;
+        } else {
+            ffx_sceneLabel_setTextData(label, (const uint8_t*)line, length);
+            index += length + 1;
+        }
+
+        ffx_sceneGroup_appendChild(state->info, label);
+        ffx_sceneLabel_setAlign(label, FfxTextAlignTop | FfxTextAlignCenter);
+        ffx_sceneLabel_setTextColor(label, color);
+        ffx_sceneNode_setPosition(label, ffx_point(WIDTH / 2, state->offset));
+
+        state->offset += metrics.size.height -  metrics.descent;
+        marginTop = 3;
+    }
+}
+
+void appendText(void *info, const char* text) {
+    _appendText(info, text, FONT_VALUE, COLOR_VALUE);
 }
 
 void appendHR(void *_state) {
@@ -203,15 +242,14 @@ void appendTitle(void *_state, const char* title) {
     State *state = _state;
 
     state->offset += PADDING;
-    appendText(state, title, FONT_TITLE, COLOR_TITLE);
+    _appendText(state, title, FONT_TITLE, COLOR_TITLE);
     state->offset += PADDING;
 
     appendHR(_state);
-
 }
 
 void appendEntry(void *_state, const char* heading, const char* value,
-  uint16_t userData) {
+  InfoClickFunc clickFunc, InfoClickArg clickArg) {
 
     State *state = _state;
 
@@ -219,13 +257,13 @@ void appendEntry(void *_state, const char* heading, const char* value,
 
     state->offset += 3;
     size_t top = state->offset;
-    FfxNode on = appendHighlight(state, COLOR_ENTRY, userData);
+    FfxNode on = appendHighlight(state, COLOR_ENTRY, clickFunc, clickArg);
 
     state->offset += 10;
-    appendText(state, heading, FONT_HEADING, COLOR_HEADING);
+    _appendText(state, heading, FONT_HEADING, COLOR_HEADING);
 
     state->offset += 8;
-    appendText(state, value, FONT_VALUE, COLOR_VALUE);
+    _appendText(state, value, FONT_VALUE, COLOR_VALUE);
 
     state->offset += 12;
 
@@ -233,8 +271,9 @@ void appendEntry(void *_state, const char* heading, const char* value,
     FfxSize boxSize = ffx_size(180, state->offset - top - 1);
     ffx_sceneBox_setSize(on, boxSize);
 
-    if (userData && userData != PanelTxViewNoDrill) {
-        FfxNode caret = ffx_scene_createLabel(state->scene, FfxFontLargeBold, ">");
+    if (clickFunc) {
+        FfxNode caret = ffx_scene_createLabel(state->scene, FfxFontLargeBold,
+          ">");
         ffx_sceneLabel_setTextColor(caret, 0x007777aa);
         ffx_sceneLabel_setOutlineColor(caret, COLOR_BLACK);
         ffx_sceneNode_setPosition(caret,
@@ -247,17 +286,18 @@ void appendEntry(void *_state, const char* heading, const char* value,
     appendHR(state);
 }
 
-void appendButton(void *_state, const char* label, color_ffxt color,
-  uint16_t userData) {
+void appendButton(void *_state, const char* title, color_ffxt color,
+  InfoClickFunc clickFunc, InfoClickArg clickArg) {
 
     State *state = _state;
 
     state->offset += 3;
     size_t top = state->offset;
-    FfxNode on = appendHighlight(state, color, userData);
+    state->offset += 1;
+    FfxNode on = appendHighlight(state, color, clickFunc, clickArg);
     state->offset += PADDING - 6;
 
-    appendText(state, label, FONT_VALUE, COLOR_VALUE);
+    _appendText(state, title, FONT_VALUE, COLOR_VALUE);
 
     state->offset += PADDING - 3;
     ffx_sceneBox_setSize(on, ffx_size(180, state->offset - top - 1));
@@ -285,14 +325,13 @@ static void onKeys(FfxEvent event, FfxEventProps props, void *_state) {
             break;
 
         case FfxKeyCancel:
-            ffx_popPanel(PANEL_TX_REJECT);
+            ffx_popPanel(0);
             break;
     }
 }
 
 typedef struct InitArg {
     InfoInitFunc initFunc;
-    InfoSelectFunc selectFunc;
     void *arg;
 } InitArg;
 
@@ -311,11 +350,11 @@ static int initFunc(FfxScene scene, FfxNode panel, void* _state, void* _arg) {
     ffx_sceneNode_setPosition(info, ffx_point(20, 20));
 
     FfxNode box = ffx_scene_createBox(scene, ffx_size(WIDTH, 400));
+    ffx_sceneBox_setColor(box, RGBA_DARKER75);
     state->box = box;
     ffx_sceneGroup_appendChild(info, box);
 
     InitArg *init = _arg;
-    state->selectFunc = init->selectFunc;
 
     init->initFunc(state, &state[1], init->arg);
 
@@ -328,15 +367,12 @@ static int initFunc(FfxScene scene, FfxNode panel, void* _state, void* _arg) {
     return 0;
 }
 
-int pushPanelInfo(InfoInitFunc _initFunc, size_t stateSize,
-  InfoSelectFunc selectFunc, void *arg) {
+int pushPanelInfo(InfoInitFunc _initFunc, size_t stateSize, void *arg) {
 
     InitArg init = {
         .initFunc = _initFunc,
-        .selectFunc = selectFunc,
         .arg = arg
     };
 
-    return ffx_pushPanel(initFunc, sizeof(State) + stateSize,
-      FfxPanelStyleSlideLeft, &init);
+    return ffx_pushPanel(initFunc, sizeof(State) + stateSize, &init);
 }
