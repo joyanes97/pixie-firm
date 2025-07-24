@@ -312,6 +312,5 @@ static int initFunc(FfxScene scene, FfxNode panel, void* panelState, void* arg) 
 }
 
 int pushPanelSpace() {
-    return ffx_pushPanel(initFunc, sizeof(SpaceState), FfxPanelStyleSlideLeft,
-      NULL);
+    return ffx_pushPanel(initFunc, sizeof(SpaceState), NULL);
 }

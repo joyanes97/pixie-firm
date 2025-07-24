@@ -94,5 +94,5 @@ static int initFunc(FfxScene scene, FfxNode node, void *_app, void *arg) {
 }
 
 int pushPanelMenu() {
-    return ffx_pushPanel(initFunc, sizeof(State), FfxPanelStyleCoverUp, NULL);
+    return ffx_pushPanel(initFunc, sizeof(State), NULL);
 }

@@ -224,5 +224,5 @@ static int initFunc(FfxScene scene, FfxNode node, void *_state, void *arg) {
 }
 
 int pushPanelGifs() {
-    return ffx_pushPanel(initFunc, sizeof(State), FfxPanelStyleSlideLeft, NULL);
+    return ffx_pushPanel(initFunc, sizeof(State), NULL);
 }

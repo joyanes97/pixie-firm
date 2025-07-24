@@ -9,10 +9,17 @@ extern "C" {
 
 #include "firefly-tx.h"
 
-#include "panel-info.h"
 
+bool pushPanelTx(FfxDataResult *tx);
 
-int pushPanelTx(FfxDataResult *tx, PanelTxView view);
+// Extensions provided for Info Panels (see panel-tx.c)
+bool appendAddress(void *info, const char* title, FfxDataResult address);
+bool appendData(void *info, const char* title, FfxDataResult data);
+bool appendDecimal(void *info, const char *title, uint8_t decimals,
+  FfxDataResult value);
+//void appendDevice(void *info, const char* title);
+bool appendNetwork(void *info, FfxDataResult chainId);
+
 
 
 #ifdef __cplusplus

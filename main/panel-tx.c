@@ -1,294 +1,369 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "firefly-address.h"
 #include "firefly-db.h"
 #include "firefly-decimal.h"
+#include "firefly-eth.h"
 #include "firefly-hollows.h"
 #include "firefly-scene.h"
 #include "firefly-tx.h"
 
+#include "panel-info.h"
 #include "panel-tx.h"
 
 #include "utils.h"
 
-// DEBUG
-void dumpBuffer(const char*, const uint8_t*, size_t);
-#include <stdio.h>
 
-#define FONT_VALUE         (FfxFontMediumBold)
-#define COLOR_VALUE        (COLOR_WHITE)
+#define DATA(t,v)        \
+  ((FfxInfoClickArg){ \
+    .a = { .i32 = (v).length }, \
+    .b = { .data = (v).bytes }, \
+    .c = { .str = (t) }, \
+  })
+#define GET_DATA(v)    \
+  ((FfxDataResult){ .length = (v).a.i32, .bytes = (v).b.data })
+
+#define GET_TITLE(v)      ((v).c.str)
+
+#define NULLARG           ((FfxInfoClickArg){ })
+
 
 typedef struct State {
     FfxDataResult tx;
 } State;
 
+///////////////////////////////
+// Utilities
+
+static void clickApprove(void *_state, FfxInfoClickArg clickArg) {
+    ffx_popPanel(true);
+}
+
+static void clickReject(void *_state, FfxInfoClickArg clickArg) {
+    ffx_popPanel(false);
+}
 
 const char* HEX = "0123456789abcdef";
 static size_t getHex(char *hexOut, const uint8_t* data, size_t length) {
     size_t offset = 0;
     hexOut[offset++] = '0';
     hexOut[offset++] = 'x';
+    size_t line = 2;
     for (int i = 0; i < length; i++) {
         hexOut[offset++] = HEX[data[i] >> 4];
         hexOut[offset++] = HEX[data[i] & 0x0f];
+        line += 2;
+        if (line >= 12) {
+            hexOut[offset++] = '\n';
+            line = 0;
+        }
     }
+    if (line == 0) { offset--; }
     hexOut[offset++] = 0;
     return offset;
 }
 
-static bool initViewNetwork(void *infoState, State *state) {
-    appendTitle(infoState, "NETWORK");
 
-    FfxDataResult data = ffx_tx_getChainId(state->tx);
-    if (data.error) {
-        printf("ERROR! Bad Value\n");
-        return false;
-    }
+///////////////////////////////
+// Address
 
-    FfxBigInt value = ffx_bigint_initBytes(data.bytes, data.length);
-    if (!ffx_bigint_cmpU32(&value, 1)) {
-        appendEntry(infoState, "NAME", "Mainnet", PanelTxViewNoDrill);
-    } else if (!ffx_bigint_cmpU32(&value, 11155111)) {
-        appendEntry(infoState, "NAME", "Sepolia", PanelTxViewNoDrill);
-    }
+static int initAddressFunc(void *info, void *_state, void *arg) {
+    FfxDataResult *data = arg;
 
-    char str[FFX_BIGINT_STRING_LENGTH];
-    size_t length = ffx_bigint_getString(&value, str);
-    appendEntry(infoState, "CHAIN ID", str, PanelTxViewNoDrill);
+    if (data->length == 0) {
+        ffx_appendInfoEntry(info, "TYPE", "deployment", NULL, NULLARG);
 
-    appendHR(infoState);
-
-    // Buttons
-    appendButton(infoState, "BACK", COLOR_BLUE, PanelTxActionApprove);
-
-    return true;
-}
-
-static bool initViewTo(void *infoState, State *state) {
-    appendTitle(infoState, "TO");
-
-    FfxDataResult data = ffx_tx_getAddress(state->tx);
-    if (data.error) {
-        printf("ERROR!! Bad Address\n");
-        return false;
-    }
-
-    appendPadding(infoState, PADDING);
-
-    if (data.length == 0) {
-        appendText(infoState, "contract", FONT_VALUE, COLOR_VALUE);
-        appendText(infoState, "deployment", FONT_VALUE, COLOR_VALUE);
-
-    } else if (data.length == 20) {
-        FFX_INIT_ADDRESS(addr, data.bytes);
+    } else if (data->length == 20) {
+        FFX_INIT_ADDRESS(addr, data->bytes);
         FfxChecksumAddress address = ffx_eth_checksumAddress(&addr);
 
-        char line[16] = { 0 };
-        line[0] = '0';
-        line[1] = 'x';
+        char data[5 * 11];
+        int offset = 0;
+        for (int i = 2; i < 42; i += 8) {
+            data[offset++] = ' ';
+            data[offset++] = ' ';
+            memcpy(&data[offset], &address.text[i], 8);
+            offset += 8;
+            data[offset++] = '\n';
+        }
+        data[offset - 1] = '\0';
+        data[0] = '0';
+        data[1] = 'x';
 
-        memcpy(&line[2], &address.text[2], 10);
-        appendText(infoState, line, FONT_VALUE, COLOR_VALUE);
-        appendPadding(infoState, 3);
-
-        line[0] = line[1] = ' ';
-        memcpy(&line[2], &address.text[12], 10);
-        appendText(infoState, line, FONT_VALUE, COLOR_VALUE);
-        appendPadding(infoState, 3);
-
-        memcpy(&line[2], &address.text[22], 10);
-        appendText(infoState, line, FONT_VALUE, COLOR_VALUE);
-        appendPadding(infoState, 3);
-
-        memcpy(&line[2], &address.text[32], 10);
-        appendText(infoState, line, FONT_VALUE, COLOR_VALUE);
-        appendPadding(infoState, 3);
+        ffx_appendInfoEntry(info, "ADDRESS", data, NULL, NULLARG);
 
     } else {
         printf("ERROR!! Bad Address\n");
         return false;
     }
 
-    appendPadding(infoState, PADDING);
-
-    return true;
-}
-
-static bool initViewSummary(void *infoState, State *state) {
-    appendTitle(infoState, "TRANSACTION");
-
-    // Network
-    {
-        FfxDataResult data = ffx_tx_getChainId(state->tx);
-        if (data.error) {
-            printf("ERROR! Bad Value\n");
-            return false;
-        }
-
-        FfxBigInt value = ffx_bigint_initBytes(data.bytes, data.length);
-        const char *name = ffx_db_getNetworkName(&value);
-        if (name) {
-            appendEntry(infoState, "NETWORK", name, PanelTxViewNetwork);
-        } else {
-            char str[FFX_BIGINT_STRING_LENGTH];
-            size_t length = ffx_bigint_getString(&value, str);
-            appendEntry(infoState, "CHAIN ID", str, PanelTxViewNetwork);
-        }
-    }
-
-    // To Address
-    {
-        FfxDataResult data = ffx_tx_getAddress(state->tx);
-        if (data.error) {
-            printf("ERROR!! Bad Address\n");
-            return false;
-        }
-
-        if (data.length == 0) {
-            appendEntry(infoState, "TO", "deploy", PanelTxViewTo);
-        } else if (data.length == 20) {
-            FFX_INIT_ADDRESS(addr, data.bytes);
-            FfxChecksumAddress address = ffx_eth_checksumAddress(&addr);
-
-            // "0x01234...5678\0"
-            char str[14];
-            memcpy(&str[0], &address.text[0], 6);
-            str[6] = '.';
-            str[7] = '.';
-            str[8] = '.';
-            memcpy(&str[9], &address.text[38], 5);
-            appendEntry(infoState, "TO", str, PanelTxViewTo);
-        } else {
-            printf("ERROR!! Bad Address\n");
-            return false;
-        }
-    }
-
-    // Value
-    {
-        FfxDataResult data = ffx_tx_getValue(state->tx);
-        if (data.error) {
-            printf("ERROR! Bad Value\n");
-            return false;
-        }
-
-        FfxBigInt value = ffx_bigint_initBytes(data.bytes, data.length);
-
-        // Reserve a space to indicate rounding occurred
-        char str[1 + FFX_ETHER_STRING_LENGTH] = { 0 };
-        FfxDecimalResult result = ffx_decimal_formatValue(&str[1], &value, (FfxDecimalFormat){
-            .round = FfxDecimalRoundCeiling,
-            .decimals = 18,
-            .groups = 3,
-            .maxDecimals = 5,
-            .minDecimals = 1,
-        });
-
-        if (result.flags & FfxDecimalFlagRounded) {
-            str[0] = '<';
-            result.str = str;
-        }
-
-        // @TODO: Drill down into value
-        //appendEntry(state, "VALUE (sETH)", result.str, PanelTxViewValue);
-        appendEntry(infoState, "VALUE (sETH)", result.str, PanelTxViewNoDrill);
-    }
-
-    // Data
-    {
-        FfxDataResult data = ffx_tx_getData(state->tx);
-        if (data.error) {
-            printf("ERROR! Bad Data\n");
-            return false;
-        }
-
-        // @TODO: Drill down into data; offer suggestions for selector
-
-        if (data.length == 0) {
-            // No data
-            appendEntry(infoState, "DATA", "none", PanelTxViewNoDrill);
-
-        } else if (data.length <= 5) {
-            // Short data; will fit in a single entry
-            char hex[20] = { 0 };
-            getHex(hex, data.bytes, data.length);
-            //appendEntry(state, "DATA", hex, PanelTxViewData);
-            appendEntry(infoState, "DATA", hex, PanelTxViewNoDrill);
-
-        } else {
-            // Long data; show first 4 bytes
-            char hex[20] = { 0 };
-            size_t offset = getHex(hex, data.bytes, 4) - 1;
-            hex[offset++] = '.';
-            hex[offset++] = '.';
-            hex[offset++] = '.';
-            hex[offset++] = '\0';
-            //appendEntry(state, "DATA", hex, PanelTxViewData);
-            appendEntry(infoState, "DATA", hex, PanelTxViewNoDrill);
-        }
-    }
-
-    appendHR(infoState);
-
     // Buttons
-    appendButton(infoState, "REJECT", COLOR_RED, PanelTxActionReject);
-    appendButton(infoState, "SIGN & SEND", COLOR_GREEN, PanelTxActionApprove);
-
-/*
-    appendField(state, "FEES", FormatHeading);
-    appendField(state, "< $0.10", FormatValue);
-*/
-    return true;
-}
-
-typedef struct InitArg {
-    FfxDataResult *tx;
-    PanelTxView view;
-} InitArg;
-
-static int initFunc(void *infoState, void *_state, void *_arg) {
-    State *state = _state;
-
-    InitArg *init = _arg;
-    state->tx = *(init->tx);
-    printf("panel-tx: ");
-    ffx_tx_dump(state->tx);;
-
-    if (init->view == PanelTxViewSummary) {
-        initViewSummary(infoState, state);
-    } else if (init->view == PanelTxViewTo) {
-        initViewTo(infoState, state);
-    } else if (init->view == PanelTxViewNetwork) {
-        initViewNetwork(infoState, state);
-    } else {
-        printf("Not supported yet: %d\n", init->view);
-        assert(0);
-    }
+    ffx_appendInfoButton(info, "BACK", COLOR_BACK, clickApprove, NULLARG);
 
     return 0;
 }
 
-void selectFunc(void *_state, uint16_t userData) {
-
-    if (userData == PanelTxActionReject) {
-        ffx_popPanel(PANEL_TX_REJECT);
-    } else if (userData == PanelTxActionApprove) {
-        ffx_popPanel(PANEL_TX_APPROVE);
-    } else if (userData == PanelTxViewNoDrill) {
-        // Do nothing; cannot drill down
-    } else if (userData) {
-        State *state = _state;
-
-        if (userData == PanelTxViewSummary || userData == PanelTxViewTo ||
-          userData == PanelTxViewNetwork) {
-            pushPanelTx(&state->tx, userData);
-        }
-    }
+static void clickAddress(void *_state, FfxInfoClickArg clickArg) {
+    FfxDataResult data = GET_DATA(clickArg);
+    const char* title = GET_TITLE(clickArg);
+    ffx_pushInfo(initAddressFunc, title, 0, &data);
 }
 
-int pushPanelTx(FfxDataResult *tx, PanelTxView view) {
-    InitArg init = { .tx = tx, .view = view };
-    return pushPanelInfo(initFunc, sizeof(State), selectFunc, &init);
+bool appendAddress(void *info, const char* title, FfxDataResult value) {
+    if (value.error) {
+        ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
+        return false;
+    }
+
+    if (value.length == 0) {
+        ffx_appendInfoEntry(info, title, "deployment", NULL, NULLARG);
+
+    } else if (value.length == 20) {
+        FFX_INIT_ADDRESS(addr, value.bytes);
+        FfxChecksumAddress address = ffx_eth_checksumAddress(&addr);
+
+        // "0x01234...5678\0"
+        char str[14];
+        memcpy(&str[0], &address.text[0], 6);
+        str[6] = '.';
+        str[7] = '.';
+        str[8] = '.';
+        memcpy(&str[9], &address.text[38], 5);
+        ffx_appendInfoEntry(info, title, str, clickAddress, DATA(title, value));
+
+    } else {
+        ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
+        return false;
+    }
+
+    return true;
+}
+
+///////////////////////////////
+// Data
+
+static int initDataFunc(void *info, void *_state, void *arg) {
+    FfxDataResult *data = arg;
+
+    char title[16];
+    char value[128];
+
+    const uint8_t *bytes = data->bytes;
+    size_t length = data->length;
+
+    {
+        if (length < 1000) {
+            snprintf(value, sizeof(value), "%d bytes", length);
+        } else {
+            snprintf(value, sizeof(value), "%d,%d bytes", length / 1000,
+              length % 1000);
+        }
+        ffx_appendInfoEntry(info, "SIZE", value, NULL, NULLARG);
+    }
+
+    if ((length % 32) == 4) {
+        getHex(value, bytes, 4);
+        ffx_appendInfoEntry(info, "SELECTOR", value, NULL, NULLARG);
+        length -= 4;
+        bytes += 4;
+    }
+
+    int i = 1;
+    while (length) {
+        if (length < 32) {
+            getHex(value, bytes, length);
+            ffx_appendInfoEntry(info, "JUNK", value, NULL, NULLARG);
+            break;
+        }
+
+        snprintf(title, sizeof(title), "WORD #%d", i);
+        int offset = getHex(value, bytes, 32) - 1;
+        for (int j = 0; j < 6; j++) { value[offset++] = ' '; }
+        value[offset] = 0;
+        ffx_appendInfoEntry(info, title, value, NULL, NULLARG);
+
+        i++;
+        bytes += 32;
+        length -= 32;
+
+        // @TODO: Fix this with the callback-based info
+        if (length > 32 && i > 12) {
+            snprintf(value, sizeof(value), "%d words", i / 32);
+            ffx_appendInfoEntry(info, "TOO LONG", value, NULL, NULLARG);
+            break;
+        }
+    }
+
+    // Buttons
+    ffx_appendInfoButton(info, "BACK", COLOR_BACK, clickApprove, NULLARG);
+
+    return true;
+}
+
+static void clickData(void *_state, FfxInfoClickArg clickArg) {
+    FfxDataResult data = GET_DATA(clickArg);
+    const char* title = GET_TITLE(clickArg);
+    ffx_pushInfo(initDataFunc, title, 0, &data);
+}
+
+bool appendData(void *info, const char* title, FfxDataResult value) {
+    if (value.error) {
+        ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
+        return false;
+    }
+
+    if (value.length == 0) {
+        // No data
+        ffx_appendInfoEntry(info, title, "none", NULL, NULLARG);
+
+    } else if (value.length <= 5) {
+        // Short data; will fit in a single entry
+        char hex[20] = { 0 };
+        getHex(hex, value.bytes, value.length);
+        ffx_appendInfoEntry(info, title, hex, NULL, NULLARG);
+
+    } else {
+        // Long data; show first 4 bytes
+        char hex[20] = { 0 };
+        size_t offset = getHex(hex, value.bytes, 4) - 1;
+        hex[offset++] = '.';
+        hex[offset++] = '.';
+        hex[offset++] = '.';
+        hex[offset++] = '\0';
+        ffx_appendInfoEntry(info, title, hex, clickData, DATA(title, value));
+    }
+
+    return true;
+}
+
+///////////////////////////////
+// Decimal
+
+//static int initDecemialFunc(void *info, void *_state, void *arg) {
+//}
+
+//static void clickDecimal(void *_state, FfxInfoClickArg clickArg) {
+//    ffx_pushInfo(initDataFunc, 0, &clickArg.data);
+//}
+
+bool appendDecimal(void *info, const char* title, uint8_t decimals,
+  FfxDataResult value) {
+
+    if (value.error) {
+        ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
+        return false;
+    }
+
+    FfxBigInt num = ffx_bigint_initBytes(value.bytes, value.length);
+
+    // Reserve a space to indicate rounding occurred
+    char str[1 + FFX_ETHER_STRING_LENGTH] = { 0 };
+    FfxDecimalResult result = ffx_decimal_formatValue(&str[1], &num, (FfxDecimalFormat){
+        .round = FfxDecimalRoundCeiling,
+        .decimals = decimals,
+        .groups = 3,
+        .maxDecimals = 5,
+        .minDecimals = 1,
+    });
+
+    if (result.flags & FfxDecimalFlagRounded) {
+        str[0] = '<';
+        result.str = str;
+    }
+
+    // @TODO: Drill down into value
+    //appendEntry(state, "VALUE (sETH)", result.str, PanelTxViewValue);
+    ffx_appendInfoEntry(info, title, result.str, NULL, NULLARG);
+
+    return true;
+}
+
+///////////////////////////////
+// Network
+
+static int initNetworkFunc(void *info, void *_state, void *arg) {
+    FfxDataResult *data = arg;
+
+    FfxBigInt value = ffx_bigint_initBytes(data->bytes, data->length);
+
+    const char *name = ffx_db_getNetworkName(&value);
+    if (name) {
+        ffx_appendInfoEntry(info, "NAME", name, NULL, NULLARG);
+    }
+
+    char str[FFX_BIGINT_STRING_LENGTH];
+    size_t length = ffx_bigint_getString(&value, str);
+    ffx_appendInfoEntry(info, "CHAIN ID", str, NULL, NULLARG);
+
+    // Buttons
+    ffx_appendInfoButton(info, "BACK", COLOR_BACK, clickApprove, NULLARG);
+
+    return 0;
+}
+
+static void clickNetwork(void *_state, FfxInfoClickArg clickArg) {
+    FfxDataResult data = GET_DATA(clickArg);
+    const char* title = GET_TITLE(clickArg);
+    ffx_pushInfo(initNetworkFunc, title, 0, &clickArg);
+}
+
+bool appendNetwork(void *info, FfxDataResult value) {
+    if (value.error) {
+        ffx_appendInfoEntry(info, "NETWORK", "ERROR!", NULL, NULLARG);
+        return false;
+    }
+
+    FfxBigInt chainId = ffx_bigint_initBytes(value.bytes, value.length);
+    const char *name = ffx_db_getNetworkName(&chainId);
+    if (name) {
+        ffx_appendInfoEntry(info, "NETWORK", name, clickNetwork, DATA("NETOWKR", value));
+
+    } else {
+        char str[FFX_BIGINT_STRING_LENGTH];
+        size_t length = ffx_bigint_getString(&chainId, str);
+        ffx_appendInfoEntry(info, "CHAIN ID", str, NULL, NULLARG);
+    }
+
+    return true;
+}
+
+
+///////////////////////////////
+// Transaction Summary
+
+static int initFunc(void *info, void *_state, void *arg) {
+
+    FfxDataResult *tx = arg;
+    ffx_tx_dump(tx);
+
+    // Network
+    appendNetwork(info, ffx_tx_getChainId(tx));
+
+    // To Address
+    appendAddress(info, "TO", ffx_tx_getAddress(tx));
+
+    // Value
+    appendDecimal(info, "VALUE (sETH)", 18, ffx_tx_getValue(tx));
+
+    // Data
+    appendData(info, "DATA", ffx_tx_getData(tx));
+
+    // Buttons
+    ffx_appendInfoButton(info, "REJECT", COLOR_CANCEL, clickReject, NULLARG);
+    ffx_appendInfoButton(info, "SIGN & SEND", COLOR_APPROVE, clickApprove,
+      NULLARG);
+
+/*
+    appendEntry(info, "MAX FEES", "", PanelTxActionFees);
+    appendEntry(info, "USD PRICE", "", 0);
+    appendEntry(info, "VALUE (USD)", "", 0);
+*/
+    return 0;
+}
+
+
+bool pushPanelTx(FfxDataResult *tx) {
+    return ffx_pushInfo(initFunc, "TRANSACTION", sizeof(State), tx);
 }
 

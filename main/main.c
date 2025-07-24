@@ -10,15 +10,10 @@
 
 #include "utils.h"
 
-//#include "panel-connect.h"
 #include "panel-menu.h"
-//#include "panel-null.h"
 #include "panel-space.h"
-//#include "panel-test.h"
-//#include "panel-tx.h"
-//#include "./panel-keyboard.h"
-//#include "./panel-game.h"
 
+#include "panel-info.h"
 
 // This is populated with a signature after signing
 //__attribute__((used)) const char code_signature[] =
@@ -31,28 +26,19 @@
 #endif
 
 
+static int initPanel(void *arg) {
+    return pushPanelMenu();
+}
+
 void app_main() {
     vTaskSetApplicationTaskTag( NULL, (void*)NULL);
 
-    FFX_LOG("GIT Commit: %s\n", GIT_COMMIT);
+    FFX_LOG("GIT Commit: %s", GIT_COMMIT);
 
-    ffx_init(ffx_demo_backgroundPixies, NULL);
-    //ffx_init(NULL, NULL);
-    //ffx_demo_pushPanelTest(NULL);
-    //pushPanelSpace();
-    pushPanelMenu();
+    ffx_init(ffx_demo_backgroundPixies, initPanel, NULL);
 
     while (1) {
-        /*
-        printf("[main] ticks=%ld high-water: main=%d io=%d, ble=%d app=%d, freq=%ld\n",
-            ticks(),
-            uxTaskGetStackHighWaterMark(NULL),
-            uxTaskGetStackHighWaterMark(taskIoHandle),
-            uxTaskGetStackHighWaterMark(taskBleHandle),
-            uxTaskGetStackHighWaterMark(taskAppHandle),
-            portTICK_PERIOD_MS);
-        */
-        printf("HERE\n");
+        ffx_dumpStats();
         delay(60000);
     }
 }

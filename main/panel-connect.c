@@ -6,9 +6,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include "firefly-address.h"
 #include "firefly-cbor.h"
 #include "firefly-ecc.h"
+#include "firefly-eth.h"
 #include "firefly-hash.h"
 #include "firefly-hollows.h"
 #include "firefly-tx.h"
@@ -58,14 +58,14 @@ static void replyAccounts(uint32_t messageId) {
     ffx_sendReply(messageId, &reply);
 }
 
-static void replySignTransaction(uint32_t messageId, FfxDataResult tx) {
+static void replySignTransaction(uint32_t messageId, FfxDataResult *tx) {
     printf("Sending: @TODO %ld\n", messageId);
     ffx_tx_dump(tx);
 
     // Compute the transaction hash to sign
     FfxEcDigest digest;
     //uint8_t digest[FFX_KECCAK256_DIGEST_LENGTH] = { 0 };
-    ffx_hash_keccak256(digest.data, tx.bytes, tx.length);
+    ffx_hash_keccak256(digest.data, tx->bytes, tx->length);
 
     // Get the private key
     FfxEcPrivkey privkey;
@@ -129,9 +129,9 @@ static void onMessage(FfxEvent event, FfxEventProps props, void* arg) {
 
     uint32_t messageId = props.message.id;
     const char* method = props.message.method;
-    FfxCborCursor params = *props.message.params;
+    FfxCborCursor params = *props.message.params;   // @TODO: Don't copy!
     printf("GOT MESSAGE: id=%ld, method=%s cbor=", messageId, method);
-    ffx_cbor_dump(params);
+    ffx_cbor_dump(&params);
 
     if (strcmp(method, "ffx_accounts") == 0) {
         replyAccounts(messageId);
@@ -141,22 +141,23 @@ static void onMessage(FfxEvent event, FfxEventProps props, void* arg) {
         uint8_t *txBuffer = malloc(txBufferSize);
         assert(txBuffer);
 
-        FfxDataResult tx = ffx_tx_serializeUnsigned(params, txBuffer, txBufferSize);
+        FfxDataResult tx = ffx_tx_serializeUnsigned(&params, txBuffer, txBufferSize);
         printf("panel-connect: ");
-        ffx_tx_dump(tx);;
+        ffx_tx_dump(&tx);;
 
-        uint32_t result = pushPanelTx(&tx, PanelTxViewSummary);
-        printf("GOT: %ld\n", result);
+        bool accept = pushPanelTx(&tx);
+        printf("GOT: %d\n", accept);
 
-        if (result == PANEL_TX_APPROVE) {
-            replySignTransaction(messageId, tx);
-        } else if (result == PANEL_TX_REJECT) {
-            ffx_sendErrorReply(messageId, 1000, "user rejected request");
+        if (accept) {
+            replySignTransaction(messageId, &tx);
         } else {
-            ffx_sendErrorReply(messageId, 42, "internal error");
+            ffx_sendErrorReply(messageId, 1000, "user rejected request");
         }
 
         free(txBuffer);
+
+    //} else if (strcmp(method, "ffx_signMessage") == 0) {
+    //} else if (strcmp(method, "ffx_attest") == 0) {
 
     } else {
         ffx_sendErrorReply(messageId, 1, "Unsupported operation");
@@ -212,6 +213,5 @@ static int initFunc(FfxScene scene, FfxNode panel, void* _state, void* arg) {
 }
 
 int pushPanelConnect() {
-    return ffx_pushPanel(initFunc, sizeof(State), FfxPanelStyleSlideLeft,
-      NULL);
+    return ffx_pushPanel(initFunc, sizeof(State), NULL);
 }
