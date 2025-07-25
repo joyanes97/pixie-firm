@@ -3,10 +3,8 @@
 #include "firefly-hollows.h"
 #include "firefly-scene.h"
 
-#include "./panel-connect.h"
-#include "./panel-gifs.h"
-#include "./panel-menu.h"
-#include "./panel-space.h"
+#include "panels.h"
+
 
 #include "images/image-arrow.h"
 

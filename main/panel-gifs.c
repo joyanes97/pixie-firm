@@ -5,12 +5,12 @@
 
 #include "utils.h"
 
-#include "panel-gifs.h"
 
 #include "images/video-fox.h"
 #include "images/video-rroll.h"
 #include "images/video-shiba.h"
 #include "images/video-nyan.h"
+
 
 typedef struct State {
     int video;

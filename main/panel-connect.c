@@ -2,7 +2,6 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -13,9 +12,7 @@
 #include "firefly-hollows.h"
 #include "firefly-tx.h"
 
-#include "panel-connect.h"
-#include "panel-tx.h"
-
+#include "panels.h"
 #include "utils.h"
 
 

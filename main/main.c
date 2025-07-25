@@ -10,10 +10,8 @@
 
 #include "utils.h"
 
-#include "panel-menu.h"
-#include "panel-space.h"
+#include "panels.h"
 
-#include "panel-info.h"
 
 // This is populated with a signature after signing
 //__attribute__((used)) const char code_signature[] =

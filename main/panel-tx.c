@@ -9,22 +9,37 @@
 #include "firefly-scene.h"
 #include "firefly-tx.h"
 
-#include "panel-info.h"
-#include "panel-tx.h"
-
 #include "utils.h"
 
 
-#define DATA(t,v)        \
-  ((FfxInfoClickArg){ \
-    .a = { .i32 = (v).length }, \
-    .b = { .data = (v).bytes }, \
-    .c = { .str = (t) }, \
+#define DATA(t,v)                 \
+  ((FfxInfoClickArg){             \
+    .a = { .i32 = (v)->length },  \
+    .b = { .data = (v)->bytes },  \
+    .c = { .str = (t) },          \
   })
+
+#define DATA2(t,v,n)              \
+  ((FfxInfoClickArg){             \
+    .a = { .i32 = (v)->length },  \
+    .b = { .data = (v)->bytes },  \
+    .c = { .str = (t) },          \
+    .d = { .str = (n) },          \
+  })
+
 #define GET_DATA(v)    \
   ((FfxDataResult){ .length = (v).a.i32, .bytes = (v).b.data })
 
+#define GET_DATA_P(v)    \
+  ((FfxDataResult){ .length = (v)->a.i32, .bytes = (v)->b.data })
+
 #define GET_TITLE(v)      ((v).c.str)
+#define GET_TITLE_P(v)    ((v)->c.str)
+
+#define GET_NAME(v)       ((v).d.str)
+#define GET_NAME_P(v)     ((v)->d.str)
+
+
 
 #define NULLARG           ((FfxInfoClickArg){ })
 
@@ -68,14 +83,22 @@ static size_t getHex(char *hexOut, const uint8_t* data, size_t length) {
 ///////////////////////////////
 // Address
 
-static int initAddressFunc(void *info, void *_state, void *arg) {
-    FfxDataResult *data = arg;
+static int initAddressFunc(void *info, void *_state, void *_arg) {
+    FfxInfoClickArg *arg = _arg;
 
-    if (data->length == 0) {
+    FfxDataResult data = GET_DATA_P(arg);
+    const char* name = GET_NAME_P(arg);
+
+    // If we have a contract name, include it
+    if (name) {
+        ffx_appendInfoEntry(info, "NAME", name, NULL, NULLARG);
+    }
+
+    if (data.length == 0) {
         ffx_appendInfoEntry(info, "TYPE", "deployment", NULL, NULLARG);
 
-    } else if (data->length == 20) {
-        FFX_INIT_ADDRESS(addr, data->bytes);
+    } else if (data.length == 20) {
+        FFX_INIT_ADDRESS(addr, data.bytes);
         FfxChecksumAddress address = ffx_eth_checksumAddress(&addr);
 
         char data[5 * 11];
@@ -105,37 +128,52 @@ static int initAddressFunc(void *info, void *_state, void *arg) {
 }
 
 static void clickAddress(void *_state, FfxInfoClickArg clickArg) {
-    FfxDataResult data = GET_DATA(clickArg);
     const char* title = GET_TITLE(clickArg);
-    ffx_pushInfo(initAddressFunc, title, 0, &data);
+    ffx_pushInfo(initAddressFunc, title, 0, &clickArg);
 }
 
-bool appendAddress(void *info, const char* title, FfxDataResult value) {
-    if (value.error) {
+bool appendAddress(void *info, const char* title, FfxDataResult *value,
+  FfxDataResult *chainId) {
+
+    if (value->error) {
         ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
         return false;
     }
 
-    if (value.length == 0) {
+    // Deployment transaction (i.e. null address)
+    if (value->length == 0) {
         ffx_appendInfoEntry(info, title, "deployment", NULL, NULLARG);
+        return true;
+    }
 
-    } else if (value.length == 20) {
-        FFX_INIT_ADDRESS(addr, value.bytes);
-        FfxChecksumAddress address = ffx_eth_checksumAddress(&addr);
-
-        // "0x01234...5678\0"
-        char str[14];
-        memcpy(&str[0], &address.text[0], 6);
-        str[6] = '.';
-        str[7] = '.';
-        str[8] = '.';
-        memcpy(&str[9], &address.text[38], 5);
-        ffx_appendInfoEntry(info, title, str, clickAddress, DATA(title, value));
-
-    } else {
+    if (value->length != 20) {
         ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
         return false;
     }
+
+    // If we have a chain ID, look for a contract name in the database
+    if (chainId) {
+        FfxBigInt cid = ffx_bigint_initBytes(chainId->bytes, chainId->length);
+        const char* name = ffx_db_getContractName(&cid, value);
+        if (name) {
+            ffx_appendInfoEntry(info, title, name, clickAddress, DATA2(title,
+              value, name));
+            return true;
+        }
+    }
+
+    // Use a condenced address representation; i.e. "0x1234...5678"
+    FFX_INIT_ADDRESS(addr, value->bytes);
+    FfxChecksumAddress address = ffx_eth_checksumAddress(&addr);
+
+    // "0x01234...5678\0"
+    char str[14];
+    memcpy(&str[0], &address.text[0], 6);
+    str[6] = '.';
+    str[7] = '.';
+    str[8] = '.';
+    memcpy(&str[9], &address.text[38], 5);
+    ffx_appendInfoEntry(info, title, str, clickAddress, DATA(title, value));
 
     return true;
 }
@@ -207,26 +245,26 @@ static void clickData(void *_state, FfxInfoClickArg clickArg) {
     ffx_pushInfo(initDataFunc, title, 0, &data);
 }
 
-bool appendData(void *info, const char* title, FfxDataResult value) {
-    if (value.error) {
+bool appendData(void *info, const char* title, FfxDataResult *value) {
+    if (value->error) {
         ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
         return false;
     }
 
-    if (value.length == 0) {
+    if (value->length == 0) {
         // No data
         ffx_appendInfoEntry(info, title, "none", NULL, NULLARG);
 
-    } else if (value.length <= 5) {
+    } else if (value->length <= 5) {
         // Short data; will fit in a single entry
         char hex[20] = { 0 };
-        getHex(hex, value.bytes, value.length);
+        getHex(hex, value->bytes, value->length);
         ffx_appendInfoEntry(info, title, hex, NULL, NULLARG);
 
     } else {
         // Long data; show first 4 bytes
         char hex[20] = { 0 };
-        size_t offset = getHex(hex, value.bytes, 4) - 1;
+        size_t offset = getHex(hex, value->bytes, 4) - 1;
         hex[offset++] = '.';
         hex[offset++] = '.';
         hex[offset++] = '.';
@@ -248,14 +286,14 @@ bool appendData(void *info, const char* title, FfxDataResult value) {
 //}
 
 bool appendDecimal(void *info, const char* title, uint8_t decimals,
-  FfxDataResult value) {
+  FfxDataResult *value) {
 
-    if (value.error) {
+    if (value->error) {
         ffx_appendInfoEntry(info, title, "ERROR!", NULL, NULLARG);
         return false;
     }
 
-    FfxBigInt num = ffx_bigint_initBytes(value.bytes, value.length);
+    FfxBigInt num = ffx_bigint_initBytes(value->bytes, value->length);
 
     // Reserve a space to indicate rounding occurred
     char str[1 + FFX_ETHER_STRING_LENGTH] = { 0 };
@@ -308,13 +346,13 @@ static void clickNetwork(void *_state, FfxInfoClickArg clickArg) {
     ffx_pushInfo(initNetworkFunc, title, 0, &clickArg);
 }
 
-bool appendNetwork(void *info, FfxDataResult value) {
-    if (value.error) {
+bool appendNetwork(void *info, FfxDataResult *value) {
+    if (value->error) {
         ffx_appendInfoEntry(info, "NETWORK", "ERROR!", NULL, NULLARG);
         return false;
     }
 
-    FfxBigInt chainId = ffx_bigint_initBytes(value.bytes, value.length);
+    FfxBigInt chainId = ffx_bigint_initBytes(value->bytes, value->length);
     const char *name = ffx_db_getNetworkName(&chainId);
     if (name) {
         ffx_appendInfoEntry(info, "NETWORK", name, clickNetwork, DATA("NETOWKR", value));
@@ -338,16 +376,26 @@ static int initFunc(void *info, void *_state, void *arg) {
     ffx_tx_dump(tx);
 
     // Network
-    appendNetwork(info, ffx_tx_getChainId(tx));
+    FfxDataResult chainId = ffx_tx_getChainId(tx);
+    appendNetwork(info, &chainId);
 
     // To Address
-    appendAddress(info, "TO", ffx_tx_getAddress(tx));
+    {
+        FfxDataResult toAddr = ffx_tx_getAddress(tx);
+        appendAddress(info, "TO", &toAddr, &chainId);
+    }
 
     // Value
-    appendDecimal(info, "VALUE (sETH)", 18, ffx_tx_getValue(tx));
+    {
+        FfxDataResult value = ffx_tx_getValue(tx);
+        appendDecimal(info, "VALUE (sETH)", 18, &value);
+    }
 
     // Data
-    appendData(info, "DATA", ffx_tx_getData(tx));
+    {
+        FfxDataResult data = ffx_tx_getData(tx);
+        appendData(info, "DATA", &data);
+    }
 
     // Buttons
     ffx_appendInfoButton(info, "REJECT", COLOR_CANCEL, clickReject, NULLARG);

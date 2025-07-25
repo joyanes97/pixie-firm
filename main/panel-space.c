@@ -1,13 +1,12 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
 #include <stdbool.h>
 #include <stdio.h>
 
 #include "firefly-scene.h"
 #include "firefly-hollows.h"
 
+#include "panels.h"
 #include "utils.h"
+
 
 #include "images/image-alien-1.h"
 #include "images/image-alien-2.h"
@@ -16,7 +15,6 @@
 #include "images/image-ship.h"
 #include "images/image-space.h"
 
-#include "panel-space.h"
 
 
 #define ROWS        (4)
@@ -89,17 +87,17 @@ static void onRender(FfxEvent event, FfxEventProps props, void *_app) {
     FfxPoint aliens = ffx_sceneNode_getPosition(space->aliens);
 
     // Finished animating the win
-    if (ship.x < -50) { ffx_popPanel(RESULT_WIN); }
+    if (ship.x < -50) { ffx_popPanel(GameResultWin); }
 
     // Finished animating the loss
-    if (aliens.x > 400) { ffx_popPanel(RESULT_LOSE); }
+    if (aliens.x > 400) { ffx_popPanel(GameResultLose); }
 
     // Either hasn't started yet or game over
     if (!space->running) { return; }
 
     // Reset button heald down for more than 3s
     if (space->keys == FfxKeyOk && ticks() - space->resetTimer > 3000) {
-        ffx_popPanel(RESULT_QUIT);
+        ffx_popPanel(GameResultQuit);
     }
 
     // Mode left/right if keys are being held down
@@ -233,8 +231,6 @@ static void onKeys(FfxEvent event, FfxEventProps props, void *_app) {
 
     FfxPoint ship = ffx_sceneNode_getPosition(space->ship);
 
-    //printf("[space] high-water: %d\n", uxTaskGetStackHighWaterMark(NULL));
-
     if (keys == FfxKeyOk) {
         space->resetTimer = ticks();
     } else {
@@ -311,6 +307,6 @@ static int initFunc(FfxScene scene, FfxNode panel, void* panelState, void* arg) 
     return 0;
 }
 
-int pushPanelSpace() {
+GameResult pushPanelSpace() {
     return ffx_pushPanel(initFunc, sizeof(SpaceState), NULL);
 }
